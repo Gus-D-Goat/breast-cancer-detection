@@ -1,0 +1,26 @@
+# Generated outputs
+evaluation_output/
+training_output/
+flagged/
+
+# Model weights (too large, downloaded via gdown at runtime)
+model/
+weights/
+
+# Training data (not needed for inference)
+data/
+csv_calc_train.csv
+csv_calc_test.csv
+csv_mass_train.csv
+csv_mass_test.csv
+
+# Gradio runtime
+.gradio/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store

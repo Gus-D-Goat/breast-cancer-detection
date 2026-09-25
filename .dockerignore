@@ -1,0 +1,23 @@
+# Keep image small — exclude training/dev stuff
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.ipynb_checkpoints/
+*.ipynb
+colab_training*.ipynb
+Demo_Notebook.ipynb
+test.ipynb
+details.md
+train.py
+evaluate.py
+prepare_dataset.py
+data/
+csv_*.csv
+model/
+weights/
+evaluation_output/
+training_output/
+flagged/
+.gradio/
+.DS_Store

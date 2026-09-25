@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: oncology-breast-scanner
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 7860
