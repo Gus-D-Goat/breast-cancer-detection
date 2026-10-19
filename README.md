@@ -1,133 +1,176 @@
 ---
 title: OncologyBreastScanner
-emoji: 🩺
 colorFrom: orange
 colorTo: gray
-sdk: gradio
-sdk_version: 4.44.1
-app_file: app.py
+sdk: streamlit
+sdk_version: 1.40.1
+app_file: streamlit_app.py
 pinned: false
 ---
 
-# **OncologyBreastScanner for Breast Cancer Detection**
+# OncologyBreastScanner for Breast Cancer Detection
 
-Breast cancer is one of the most common malignancies among women, and early detection can significantly reduce mortality rates. Mammography, which uses X-ray images, plays a crucial role in detecting early signs of breast cancer. Doctors use a mammogram to look for early signs of breast cancer. Regular mammograms are the best tests doctors have to find breast cancer early, sometimes up to three years before it can be felt. A mammogram shows how dense the breasts are. Women with dense breasts have a higher risk of getting breast cancer. This project aims to classify breast cancer images based on the density of the tissue using deep learning techniques.
+Breast cancer is one of the most common malignancies among women, and early detection can significantly reduce mortality. Mammography uses X-ray images to reveal early signs of breast cancer, sometimes up to three years before a lump can be felt. Mammograms also show breast density, and people with dense breasts have a higher risk of breast cancer.
+
+This project classifies mammogram images into eight categories combining benign or malignant findings with breast density from 1 to 4.
 
 ## Project Overview
 
-This project implements a deep learning-based system to classify breast cancer images into benign or malignant categories based on the density of the tissue. The model uses a pre-trained **DenseNet201** architecture fine-tuned for this specific classification task. A **Convolutional Neural Network (CNN)** approach processes the images for early detection of breast cancer, which is critical for better treatment outcomes.
-
-The system is wrapped in a **Gradio-based web interface**, allowing users to upload mammogram images and receive real-time predictions.
-
-https://github.com/user-attachments/assets/4e5d1de2-7954-4024-b94f-e0b976db4a05
+The model uses a **DenseNet201** backbone fine-tuned for this classification task. A shared preprocessing and inference layer is used by the **Streamlit** interface, which lets users upload a mammogram and review the predicted class and all eight class probabilities.
 
 ## Features
 
-- **Deep Learning Classification**: Utilizes the DenseNet201 model to classify images into 8 categories based on malignancy and tissue density.
-- **Interactive Interface**: Gradio interface for uploading images and viewing predictions in real-time.
-- **Pre-trained Model**: DenseNet201 pre-trained on ImageNet and fine-tuned on breast cancer data.
-- **Categorical Classification**: The model predicts whether an image is benign or malignant, based on the density scale (1 to 4).
+- **Deep learning classification:** DenseNet201 classifies images into eight benign/malignant and density categories.
+- **Streamlit interface:** upload, example cases, class probabilities, and a visual guide.
+- **Shared inference layer:** the same preprocessing and prediction code is used by the app and tests.
+- **Low-confidence handling:** predictions below 30% are reported as low confidence instead of a category.
+- **In-memory processing:** uploaded images and prediction history are not stored by the app.
 
-### Density Categories:
+### Density Categories
 
-- **(1)** Almost entirely fatty
-- **(2)** Scattered areas of fibroglandular density
-- **(3)** Heterogeneously dense
-- **(4)** Extremely dense
+- **1** — almost entirely fatty
+- **2** — scattered areas of fibroglandular density
+- **3** — heterogeneously dense
+- **4** — extremely dense
 
-### Tumor Types:
+### Classification Categories
 
-- **Benign** (non-cancerous)
-- **Malignant** (cancerous)
-
-<img width="536" alt="Screenshot 2024-12-21 at 2 15 34 PM" src="https://github.com/user-attachments/assets/28d6d5b3-065d-4918-96af-0c8a1f5cf5c0" />
-
-### Classification Categories:
-
-1. **Benign with Density = 1**
-2. **Malignant with Density = 1**
-3. **Benign with Density = 2**
-4. **Malignant with Density = 2**
-5. **Benign with Density = 3**
-6. **Malignant with Density = 3**
-7. **Benign with Density = 4**
-8. **Malignant with Density = 4**
+1. Benign with Density = 1
+2. Malignant with Density = 1
+3. Benign with Density = 2
+4. Malignant with Density = 2
+5. Benign with Density = 3
+6. Malignant with Density = 3
+7. Benign with Density = 4
+8. Malignant with Density = 4
 
 ## Technologies Used
 
-- **TensorFlow**: For building, training, and deploying the deep learning model.
-- **Keras**: High-level API for building the model architecture.
-- **OpenCV**: For image preprocessing and manipulation (e.g., applying filters).
-- **Gradio**: For creating the web interface to interact with the model.
-- **NumPy**: For handling image arrays and mathematical operations.
+- **TensorFlow / Keras:** DenseNet201 model and inference.
+- **OpenCV:** resizing, sharpening, and image preprocessing.
+- **Streamlit:** web interface.
+- **NumPy:** image arrays and probability handling.
+- **Pillow:** reading uploaded images.
 
 ## How the Project Works
 
-### Model Architecture:
+1. **Upload:** the user selects a mammogram in the Streamlit app.
+2. **Preprocess:** the image is converted to RGB, resized to 224 × 224, sharpened, and normalized to 0–1.
+3. **Predict:** DenseNet201 produces a probability for each of the eight classes.
+4. **Review:** the app shows the most likely class or a low-confidence warning, followed by every class probability.
 
-- **DenseNet201**: The model uses a pre-trained DenseNet201 architecture, which has been fine-tuned for breast cancer classification. DenseNet201 is known for its dense connections between layers, enabling better feature reuse and improved accuracy.
-  
-- **Training Process**: The model is trained on a dataset of breast cancer images, with labels corresponding to various malignancy categories. Pre-trained weights from ImageNet help speed up training and improve accuracy.
+### Workflow Images
 
-- **Fine-Tuning**: Some layers from the DenseNet201 base model are unfrozen for fine-tuning on the breast cancer dataset. Regularization techniques like L1 and L2 help prevent overfitting.
+![Crop and enhancement workflow](image/after%20cropping.png)
 
-- **Preprocessing**: The images are preprocessed by applying filters to enhance relevant features. They are resized to 224x224 and normalized for use with the DenseNet201 model.
+![Processing](image/processing.png)
 
-## Training Images for each Class
+### Tissue Examples
 
-#### Benign 
-![Benign](https://github.com/ksamaarora/OncologyBreastScanner-deeplearning/blob/main/image/Begign.png)
+#### Benign
+
+![Benign tissue](image/benign.png)
 
 #### Malignant
-![Malignant](https://github.com/ksamaarora/OncologyBreastScanner-deeplearning/blob/main/image/malignant.png)
 
-### Workflow:
+![Malignant tissue](image/malignant.png)
 
-1. **Image Upload**: Users upload an image through the Gradio interface.
-2. **Preprocessing**: The image is preprocessed by applying filters and normalization.
-3. **Model Prediction**: The processed image is passed to the model for classification.
-4. **Output**: The model outputs the predicted class along with probabilities for each of the 8 categories.
+## Model Weights
 
-## Image Processing
+The weights file is not committed to the repository. At startup, the app resolves weights in this order:
 
-Since mammograms often appear blurry and dull, image preprocessing has been done to enhance sharpness and contrast, improving model performance:
+1. A local `weights/modeldense1.h5`.
+2. A direct download URL from the `MODEL_WEIGHTS_URL` environment variable or Streamlit secret.
+3. The original public Google Drive file through `gdown`.
 
-![Processing](https://github.com/ksamaarora/OncologyBreastScanner-deeplearning/blob/main/image/processing.png)
+For a reliable deployment, host the weights at a stable direct URL and configure it in Streamlit:
 
-## How to Run the Project Locally
+```toml
+# .streamlit/secrets.toml
+MODEL_WEIGHTS_URL = "https://example.com/modeldense1.h5"
+```
 
-1. **Clone the Repository**:
+You can also set it as an environment variable:
 
-   ```bash
-   git clone https://github.com/ksamaarora/oncology-breast-scanner.git
-   cd oncology-breast-scanner
-   ```
+```bash
+export MODEL_WEIGHTS_URL="https://example.com/modeldense1.h5"
+```
 
-2. **Create and Activate a Conda Environment**:
+Google Drive links can be rate-limited or blocked by download quotas, so they are only a fallback.
 
-   ```bash
-   conda create -n oncology-breast-scanner python=3.9 -y
-   conda activate oncology-breast-scanner
-   ```
+## Run Locally
 
-3. **Install Dependencies**:
+Python 3.11 is recommended because TensorFlow 2.15 supports Python 3.9–3.11.
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+git clone https://github.com/Gus-D-Goat/breast-cancer-detection.git
+cd breast-cancer-detection
+git checkout streamlit
 
-4. **Run the Application**:
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
 
-   Start the application:
+Open `http://localhost:8501`.
 
-   ```bash
-   python app.py
-   ```
+To start from a downloaded set of weights:
 
-   This will start a local server, and you can access the interface at `http://127.0.0.1:7860` or use the public link generated by Gradio.
+```bash
+mkdir -p weights
+cp /path/to/modeldense1.h5 weights/modeldense1.h5
+```
 
-   When done, deactivate the Conda environment:
+## Deploy to Streamlit Community Cloud
 
-   ```bash
-   conda deactivate
-   ```
+1. Push the `streamlit` branch to GitHub.
+2. Create a new app at [share.streamlit.io](https://share.streamlit.io).
+3. Select the repository, the `streamlit` branch, and `streamlit_app.py` as the main file.
+4. Under **Advanced settings**, select **Python 3.11**.
+5. Add `MODEL_WEIGHTS_URL` under **Secrets** if the weights are hosted outside Google Drive.
+6. Deploy the app.
+7. To share it privately, open **App settings → Sharing** and invite viewers by email.
+
+Community Cloud apps sleep after inactivity and may need extra time to start while TensorFlow loads.
+
+## Docker
+
+A Docker fallback is included:
+
+```bash
+docker build -t oncology-breast-scanner .
+docker run --rm -p 8501:8501 -e MODEL_WEIGHTS_URL="https://example.com/modeldense1.h5" oncology-breast-scanner
+```
+
+Open `http://localhost:8501`.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Tests that require TensorFlow or local model weights are skipped when those dependencies are unavailable.
+
+## Project Structure
+
+```text
+.
+├── streamlit_app.py       # Streamlit interface
+├── inference.py           # Shared loading, prediction, and confidence logic
+├── model.py               # DenseNet201 architecture
+├── preprocess.py          # Image preprocessing
+├── weights.py             # Weight download and caching
+├── requirements.txt
+├── packages.txt
+├── .streamlit/config.toml
+├── Test_images/           # Example mammograms
+├── image/                 # Interface and documentation assets
+└── tests/
+    └── test_inference.py
+```
+
+## Disclaimer
+
+This project is for research and educational purposes only. It is not a medical device and must not be used as a substitute for diagnosis or review by a qualified clinician.

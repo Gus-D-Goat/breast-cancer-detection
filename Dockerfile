@@ -1,8 +1,10 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PORT=7860
+    PORT=8501 \
+    STREAMLIT_SERVER_HEADLESS=true \
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
 WORKDIR /app
 
@@ -16,10 +18,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py model.py preprocess.py weights.py README.md ./
+COPY streamlit_app.py inference.py model.py preprocess.py weights.py README.md ./
 COPY Test_images ./Test_images
 COPY image ./image
 
-EXPOSE 7860
+EXPOSE 8501
 
-CMD ["python", "app.py"]
+CMD ["streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]

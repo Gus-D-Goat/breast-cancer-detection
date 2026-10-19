@@ -3,7 +3,7 @@
 > **A deep learning system for breast cancer detection from mammogram images.**
 > Classifies mammograms into 8 categories combining tissue density (BI-RADS 1-4)
 > with pathology (benign vs malignant). Uses DenseNet201 fine-tuned on the
-> CBIS-DDSM dataset, wrapped in a Gradio web interface.
+> CBIS-DDSM dataset, wrapped in a Streamlit web interface.
 
 ---
 
@@ -46,8 +46,9 @@ classification task. The 8 classes combine two dimensions:
 | 6 | Benign with Density=4 |
 | 7 | Malignant with Density=4 |
 
-The system is wrapped in a **Gradio web interface** where users upload mammogram
-images and receive real-time predictions with probabilities for all 8 categories.
+The system is wrapped in a **Streamlit web interface** where users upload
+mammogram images and receive real-time predictions with probabilities for all 8
+categories.
 
 **Dataset:** [CBIS-DDSM](https://wiki.cancerimagingarchive.net/display/Public/CBIS-DDSM)
 (Curated Breast Imaging Subset of DDSM) — a standardized and curated subset of
@@ -59,23 +60,32 @@ the Digital Database for Screening Mammography.
 
 ```
 breast/
-├── app.py                        # Gradio web application (entry point)
+├── streamlit_app.py              # Streamlit web application (entry point)
+├── inference.py                  # Shared inference layer (preprocess → predict → top label)
 ├── model.py                      # DenseNet201 model architecture definition
-├── weights.py                    # Downloads pre-trained weights from Google Drive
+├── weights.py                    # Downloads pre-trained weights (env URL or Google Drive)
 ├── preprocess.py                 # Image preprocessing pipeline (CLAHE, sharpening, normalization)
 ├── train.py                      # Full two-phase training pipeline with CLI
 ├── evaluate.py                   # Comprehensive model evaluation suite
 ├── prepare_dataset.py            # Prepares CBIS-DDSM dataset from raw Kaggle format
 │
 ├── requirements.txt              # Python package dependencies
+├── packages.txt                  # apt packages installed by hosted platforms (libgomp1, libglib2.0-0)
+├── Dockerfile                    # Container image (python:3.11-slim + Streamlit on 8501)
+├── render.yaml                   # Render.com blueprint (docker runtime)
+├── .streamlit/
+│   └── config.toml               # Streamlit theme + server settings
+├── tests/
+│   └── test_inference.py         # Unit tests for the shared inference layer
 ├── .gitignore                    # Git exclusion rules
+├── .dockerignore                 # Docker build-context exclusion rules
 ├── README.md                     # Project README (high-level overview)
 │
 ├── model/                        # Saved model files (gitignored)
 │   └── model.h5                  # Full serialized Keras model (~87 MB)
 │
 ├── weights/                      # Pre-trained weight files (gitignored)
-│   └── modeldense1.h5            # Weights-only file (~256 MB, downloaded via gdown)
+│   └── modeldense1.h5            # Weights-only file (~256 MB, downloaded at runtime)
 │
 ├── data/                         # Processed dataset (gitignored)
 │   ├── train_set.csv             # Training split CSV (~1192 images)
@@ -93,18 +103,13 @@ breast/
 │   ├── Maliggnant.png / malignant.png  # Malignant mammogram examples
 │   ├── prediction.png            # Prediction output screenshot
 │   ├── processing.png            # Preprocessing pipeline visualization
-│   └── webpage.png               # Original Gradio interface screenshot
+│   └── webpage.png               # Historical interface screenshot (unused)
 │
 ├── evaluation_output/            # Saved evaluation plots (gitignored)
 │   ├── confusion_matrix.png
 │   └── roc_curves.png
 │
 ├── training_output/              # Training artifacts (gitignored, empty by default)
-│
-├── flagged/                      # Gradio-flagged predictions (gitignored)
-│   └── log.csv
-│
-├── .gradio/                      # Gradio runtime files (gitignored)
 │
 ├── colab_training.ipynb          # Google Colab training notebook
 ├── colab_training_v2.ipynb       # Google Colab training notebook v2
@@ -124,164 +129,179 @@ breast/
 
 ## 3. Core Source Files
 
-### 3.1 `app.py` — Gradio Web Application
+### 3.1 `streamlit_app.py` — Streamlit Web Application
 
-**File:** `app.py` (290 lines)
-**Purpose:** The main entry point. Launches a Gradio web interface for inference.
+**File:** `streamlit_app.py` (327 lines)
+**Purpose:** The main entry point. Builds the full Streamlit UI for inference.
 
 **Imports:**
-- `tensorflow` / `numpy` — inference engine
-- `model.load_model` — builds/loads the DenseNet201 architecture
-- `weights.download_weights` — fetches trained weights from Google Drive
-- `preprocess.preprocess_numpy_array` — image preprocessing for inference
-- `gradio` — web UI framework
+- `os`, `pathlib.Path` — environment lookups and filesystem paths
+- `numpy` — array conversion for the inference call
+- `streamlit` — web UI framework
+- `PIL.Image` — decodes uploads and on-disk example images
+- `inference` — `CLASS_NAMES`, `LOW_CONFIDENCE_THRESHOLD`,
+  `load_inference_model`, `predict_array`, `top_prediction`
 
 **Module-Level Constants:**
+- `BASE_DIR = Path(__file__).resolve().parent` — anchors every asset path to the
+  app directory
+- `EXAMPLE_DIR = BASE_DIR / "Test_images"` — example mammograms
+- `IMAGE_DIR = BASE_DIR / "image"` — guide media
+- `EXAMPLES = sorted(EXAMPLE_DIR.glob("*.jpg"))` — the 4 example image paths
 
-`CLASS_NAMES` — list of 8 human-readable class label strings used for
-displaying results in the UI.
+**Page Configuration:**
+`st.set_page_config(page_title="OncologyBreastScanner", layout="wide",
+initial_sidebar_state="collapsed")` — a wide layout with no sidebar. An inline
+`<style>` block (injected via `st.markdown(..., unsafe_allow_html=True)`)
+defines the hero banner, `.pill` tech badge, `.section-title`, `.note` callout,
+and `.footer` disclaimer styling.
 
-`CSS` — a 57-line custom CSS string injected into the Gradio interface.
-Defines styles for:
-- `.header-wrapper` / `.header-title` / `.header-accent` / `.header-subtitle` — branded header typography
-- `.header-badge` — orange pill badge showing tech stack
-- `.upload-section` / `.results-section` — column spacing
-- `.guide-card` — card container used in the "How It Works" tab
-- `.pipeline-step` / `.pipeline-num` / `.pipeline-text` — numbered step layout with gradient orange number badges
-- `.footer-disclaimer` — gray footer with top border
+**Helper Functions:**
+- `_setting(name)` — resolves configuration from `os.environ` first, then
+  `st.secrets`, but only after `st.secrets.load_if_toml_exists()` confirms a
+  secrets file exists. The guard avoids Streamlit printing a red
+  "No secrets found" error box when no `secrets.toml` is present.
+- `get_model(weights_url)` — decorated with
+  `@st.cache_resource(show_spinner="Loading the model...")`, so the network is
+  built once and reused across Streamlit reruns.
+- `_set_image(image)` / `_select_example(path)` / `_clear_all()` — mutate
+  session state, bumping `uploader_key` to force the file-uploader widget to
+  reset.
+- `_clear_result()` — drops any previously computed scores.
 
-**Main Function (`main()`, lines 60–290):**
+**Session State:**
+Initialized once with `image=None`, `scores=None`, `uploader_key=0`, and
+`upload_token=None`. Session state preserves the selected image and its scores
+across reruns.
 
-**Step 1 — Model Loading (lines 62–71):**
-Calls `load_model()` which tries to load `model/model.h5` first, falling
-back to building a fresh DenseNet201 architecture from code. The model is
-then compiled with:
-- Optimizer: Adam (learning rate = 0.00001)
-- Loss: CategoricalCrossentropy with label smoothing = 0.1
-- Metrics: accuracy
-
-Downloads the 256 MB weight file from Google Drive via `download_weights()`
-if not already cached locally, then loads them with `model.load_weights()`.
-
-**Step 2 — Prediction Function `predict_img(img)` (lines 73–90):**
-
-```python
-def predict_img(img):
-```
-
-Accepts a single numpy array argument from Gradio's `gr.Image` widget.
-Processing flow:
-
-1. **Null check:** If `img is None`, returns a zeroed dict for all 8 classes
-2. **Preprocessing:** Passes `img` through `preprocess_numpy_array()` which:
-   - Converts float [0,1] arrays to uint8 if needed
-   - Converts grayscale/RGBA to RGB
-   - Resizes to 224x224
-   - Applies sharpening filter
-   - Normalizes to [0, 1]
-3. **Shape validation:** If output shape is not `(224, 224, 3)`, returns zeroed dict
-4. **Inference:** Reshapes to `(1, 224, 224, 3)` and runs `model.predict(verbose=0)`
-5. **Confidence gate:** If the highest predicted probability is below 0.3,
-   returns `{"Low confidence — consider re-uploading": 1.0}`
-6. **Normal output:** Returns `{CLASS_NAMES[i]: float(pred[i]) for i in range(8)}`
-   — a dict mapping each class label to its probability (0.0–1.0)
-
-**Step 3 — Gradio Blocks UI (lines 92–284):**
-
-Uses `gr.Blocks` with `gr.themes.Soft(primary_hue="orange", secondary_hue="gray")`
-and the custom CSS string. The layout is:
-
-```
-+--------------------------------------------------+
-| HEADER: tech badge, title, subtitle               |
-+--------------------------------------------------+
-| TABS: [Analyze] [How It Works] [Visual Guide]     |
-|                                                    |
-| Tab "Analyze":                                     |
-|   +------------------------+---------------------+ |
-|   | UPLOAD AREA            | RESULTS PANEL       | |
-|   | [Image upload widget]  | [gr.Label top-8]    | |
-|   | [Analyze] [Clear]      |                     | |
-|   | Example Cases gallery  |                     | |
-|   +------------------------+---------------------+ |
-|                                                    |
-| Tab "How It Works":                                |
-|   4-step pipeline explanation + visuals            |
-|                                                    |
-| Tab "Visual Guide":                                |
-|   Benign vs Malignant examples + BI-RADS table    |
-+--------------------------------------------------+
-| FOOTER: research-use-only disclaimer              |
-+--------------------------------------------------+
-```
-
-**Tab 1 — "Analyze" (lines 114–147):**
-Two-column `gr.Row(equal_height=True)`:
-- **Left column (.upload-section):**
-  - `gr.Image(type="numpy", image_mode="RGB", height=400)` — the upload widget
-  - `gr.Row` with Analyze (`variant="primary"`, scale=2) and Clear (`variant="secondary"`, scale=1) buttons
-  - `gr.Examples` gallery showing 4 pre-loaded mammograms from `Test_images/`
-- **Right column (.results-section):**
-  - `gr.Label(num_top_classes=8, label="Analysis Results")` — displays the prediction dict as a horizontal bar chart
-
-**Tab 2 — "How It Works" (lines 150–210):**
-Educational content explaining the processing pipeline:
-- **Left column:** `gr.HTML` with 4 numbered pipeline steps using custom CSS:
-  1. Color Normalization — grayscale/RGBA to RGB
-  2. Image Resizing — to 224x224
-  3. Contrast Enhancement — CLAHE in LAB color space
-  4. Sharpening & Normalization — convolution kernel + [0,1] scaling
-- **Right column:** Two `gr.Image` components displaying:
-  - `image/processing.png` — preprocessing visualization
-  - `image/after cropping.png` — post-cropping result
-- Followed by model architecture summary in Markdown
-
-**Tab 3 — "Visual Guide" (lines 213–258):**
-Reference material for users:
-- Side-by-side `gr.Image` components showing `benign.png` and `malignant.png`
-  with descriptive captions about each finding type
-- Horizontal rule + BI-RADS density table in Markdown
-- `image/prediction.png` showing a sample prediction output
-
-**Footer (lines 261–268):**
-`gr.HTML` disclaimer: "Research Use Only — This tool is for educational and
-research purposes. It is not a medical device..."
-
-**Event Handlers (lines 270–284):**
+**Model Loading (module level, ~line 124):**
 
 ```python
-def clear_all():
-    empty = {name: 0.0 for name in CLASS_NAMES}
-    return None, empty
+weights_url = _setting("MODEL_WEIGHTS_URL")
+try:
+    model = get_model(weights_url)
+except Exception as exc:
+    st.error("The model weights could not be loaded. ...")
+    with st.expander("Technical details"):
+        st.exception(exc)
+    st.stop()
 ```
 
-- `analyze_btn.click(fn=predict_img, inputs=[input_image], outputs=[output_label])`
-  — On click, preprocesses the image, runs inference, and updates the label
-- `clear_btn.click(fn=clear_all, inputs=[], outputs=[input_image, output_label])`
-  — Resets the image widget to None and the label to all zeros
+The model loads once at startup (downloading weights if necessary). On failure a
+friendly error plus a technical expander renders, then the script halts.
 
-**Step 4 — Launch (line 286):**
-`demo.launch(server_name="0.0.0.0")` — starts the Gradio server bound to all
-network interfaces (required for cloud deployment).
+**UI Structure:**
+Three tabs created with `st.tabs(["Analyze mammogram", "How it works",
+"Visual guide"])`:
+
+**Tab 1 — "Analyze mammogram":**
+Two wide columns (`st.columns([1, 1], gap="large")`):
+- **Left column:** a `st.file_uploader` (PNG/JPG/JPEG/BMP/TIF/TIFF) whose key
+  includes `uploader_key`, so programmatic changes force a fresh widget. A
+  `file_id`/`(name, size)` token dedupes repeated decodes. The selected image
+  renders via `st.image(..., use_container_width=True)`, or an info hint
+  appears. An **Analyze mammogram** button (`type="primary"`, disabled until an
+  image exists) runs inference:
+  ```python
+  with st.spinner("Applying preprocessing and running the model..."):
+      scores = predict_array(model, np.array(st.session_state.image))
+  ```
+  A **Clear** button resets state. Below, an **Example cases** row renders each
+  `Test_images/` file with a button that loads it into session state.
+- **Right column:** renders the result. When scores exist it calls
+  `top_prediction(scores)`:
+  - low confidence → `st.warning(...)`
+  - otherwise → `st.metric(label="Most likely classification", value=label,
+    delta=f"{confidence:.1%} confidence", delta_color="off")`
+
+  Every class probability then renders as a `st.progress` bar sorted high to
+  low, followed by a caption noting the 30% threshold and a `.note` card
+  explaining that uploads are processed in memory and never saved.
+
+**Tab 2 — "How it works":**
+A four-step Markdown pipeline (upload → preprocess → classify → review), two
+guide images (`image/after cropping.png`, `image/processing.png`) rendered only
+if present, the list of all 8 `CLASS_NAMES`, and the 4-level density scale.
+
+**Tab 3 — "Visual guide":**
+Side-by-side `image/benign.png` and `image/malignant.png` examples (guarded by
+`.exists()`), explanatory Markdown, and the research-use footer disclaimer.
+
+**Privacy:** Uploads are decoded in memory only; no files or prediction history
+are written to disk.
 
 ---
 
-### 3.2 `model.py` — Model Architecture
+### 3.2 `inference.py` — Shared Inference Layer
 
-**File:** `model.py` (57 lines)
+**File:** `inference.py` (56 lines)
+**Purpose:** A UI-agnostic inference contract shared by the Streamlit app and
+the unit tests. Keeping prediction logic here decouples it from the web
+framework.
+
+**Import:**
+- `weights.WEIGHTS_PATH`, `weights.download_weights` — resolve and fetch the
+  weights file
+
+**Module-Level Constants:**
+- `CLASS_NAMES` — the 8 human-readable labels in model output order (index 0–7)
+- `INPUT_SHAPE = (224, 224, 3)` — required model input dimensions
+- `LOW_CONFIDENCE_THRESHOLD = 0.3` — minimum top score to report a category
+- `LOW_CONFIDENCE_LABEL = "Low confidence — consider re-uploading"`
+
+#### Function: `load_inference_model(weights_path=WEIGHTS_PATH, weights_url=None)`
+
+Builds and loads a ready-to-use model:
+1. Lazily imports `build_model` from `model.py` (keeps the TensorFlow import out
+   of module import time).
+2. Calls `download_weights(dest=weights_path, url=weights_url)`, which returns
+   the resolved path whether the file already existed or was freshly downloaded.
+3. Builds the architecture with `pretrained=False` (weights come from disk, not
+   ImageNet).
+4. Loads the weights with `model.load_weights(path)`.
+5. Returns the model.
+
+#### Function: `predict_array(model, image)`
+
+The single inference entry point:
+1. Returns `None` for a `None` image.
+2. Lazily imports `preprocess_numpy_array` and runs it.
+3. Returns `None` if preprocessing fails or the shape is not `INPUT_SHAPE`.
+4. Reshapes to a single-item batch `(1, 224, 224, 3)` and runs
+   `model.predict(batch, verbose=0)[0]`.
+5. Returns `{class_name: float(probability)}` for all 8 classes.
+
+#### Function: `top_prediction(scores)`
+
+Reduces a score dict to a display decision, returning a
+`(label, confidence, low_confidence)` tuple:
+- Empty/`None` scores → `(None, 0.0, True)`
+- Highest score below `LOW_CONFIDENCE_THRESHOLD` →
+  `(LOW_CONFIDENCE_LABEL, confidence, True)`
+- Otherwise → `(label, confidence, False)`
+
+The confidence gate exists to avoid presenting a confident-looking but
+unreliable result on out-of-distribution or corrupted images.
+
+---
+
+### 3.3 `model.py` — Model Architecture
+
+**File:** `model.py` (62 lines)
 **Purpose:** Defines, builds, loads, and saves the DenseNet201-based classifier.
 
 **Imports:**
-- `os` — path existence checks
+- `pathlib.Path` — location-independent path resolution
 - `tensorflow` / `tensorflow.keras.*` — model construction and loading
 - `DenseNet201` from Keras applications
 - `l1_l2` regularizer
 
-**Module-Level Constants:**
-- `MODEL_PATH = "model/model.h5"` — default path for full model serialization
-- `WEIGHTS_PATH = "weights/modeldense1.h5"` — default path for weights-only file
+**Module-Level Constants (resolved relative to the file, not the CWD):**
+- `BASE_DIR = Path(__file__).resolve().parent`
+- `MODEL_PATH = BASE_DIR / "model" / "model.h5"` — default path for full model serialization
+- `WEIGHTS_PATH = BASE_DIR / "weights" / "modeldense1.h5"` — default path for weights-only file
 
-#### Function: `build_model(input_shape, n_classes, dropout_rate)` (lines 12–34)
+#### Function: `build_model(input_shape=(224,224,3), n_classes=8, dropout_rate=0.5, pretrained=True)`
 
 Constructs the complete model architecture from scratch. Architecture diagram:
 
@@ -289,7 +309,7 @@ Constructs the complete model architecture from scratch. Architecture diagram:
 Input(224, 224, 3)
     |
     v
-DenseNet201 (include_top=False, weights='imagenet', trainable=True)
+DenseNet201 (include_top=False, weights='imagenet' if pretrained else None, trainable=True)
     |
     +-- GlobalAveragePooling2D() --+
     +-- GlobalMaxPooling2D()     --+
@@ -329,62 +349,85 @@ DenseNet201 (include_top=False, weights='imagenet', trainable=True)
   (`conv_base.trainable = True`), allowing end-to-end fine-tuning. The
   training script (`train.py`) handles the two-phase approach (head-only
   then full fine-tuning) externally.
+- **`pretrained` flag:** `weights="imagenet" if pretrained else None`. Training
+  and generic loading use `pretrained=True` to fetch ImageNet backbone weights;
+  inference calls `build_model(pretrained=False)` because the trained weights
+  are then loaded from the local `.h5` file, avoiding a network fetch and the
+  associated memory spike on constrained hosts.
 
-#### Function: `load_model(path, weights_path)` (lines 37–52)
+#### Function: `load_model(path=MODEL_PATH, weights_path=WEIGHTS_PATH, pretrained=True)`
 
 A smart model loader with fallback logic:
 
-1. If `model/model.h5` exists → attempt `tf.keras.models.load_model(path)`
+1. If `path` exists and has a `.h5` suffix → attempt
+   `tf.keras.models.load_model(path)`
    - This loads the architecture, weights, and optimizer state in one call
    - Wrapped in try/except to handle TF version mismatches (model was
      originally trained with TF 2.4.1)
-2. If step 1 fails or the file doesn't exist → call `build_model()` for a
-   fresh architecture
-3. If `weights/modeldense1.h5` exists → load weights into the architecture
-4. Compile with Adam(lr=1e-5), CategoricalCrossentropy(label_smoothing=0.1),
-   accuracy metric
+2. If step 1 fails or the file doesn't exist → call
+   `build_model(pretrained=pretrained)` for a fresh architecture
+3. If `weights_path` exists → load weights into the architecture
+4. Compile with Adam(learning_rate=1e-5),
+   CategoricalCrossentropy(label_smoothing=0.1), accuracy metric
 
 Returns a compiled, inference-ready model.
 
-#### Function: `save_model(model, path)` (lines 55–57)
+#### Function: `save_model(model, path=MODEL_PATH)`
 
 Serializes the full model (architecture + weights + optimizer state) to disk.
 Creates parent directories if needed.
 
 ---
 
-### 3.3 `weights.py` — Weight Download
+### 3.4 `weights.py` — Weight Download
 
-**File:** `weights.py` (7 lines)
-**Purpose:** Downloads the 256 MB pre-trained weights file from Google Drive.
+**File:** `weights.py` (55 lines)
+**Purpose:** Ensures the 256 MB pre-trained weights file is present, preferring
+a direct download URL from the `MODEL_WEIGHTS_URL` environment variable and
+falling back to Google Drive.
 
-**Import:**
-- `gdown` — Google Drive download utility
-- `os` — path existence check
+**Imports:**
+- `os` — environment variable lookup
+- `shutil` — streamed file copy for URL downloads
+- `pathlib.Path` — path handling
+- `urllib.request` — stdlib HTTP download (no extra dependency)
+- `gdown` (lazy import) — Google Drive fallback
 
-**Function: `download_weights()` (lines 4–7)**
+**Module constants**
 
 ```python
-def download_weights():
-    if os.path.exists("weights/modeldense1.h5"):
-        return
-    gdown.download(
-        id="1--7p9rRJy7WU4OmomkzM8i0veetZctTT",
-        output="weights/modeldense1.h5",
-        quiet=False
-    )
+BASE_DIR = Path(__file__).resolve().parent
+WEIGHTS_DIR = BASE_DIR / "weights"
+WEIGHTS_PATH = WEIGHTS_DIR / "modeldense1.h5"
+WEIGHTS_URL_ENV = "MODEL_WEIGHTS_URL"
+GDRIVE_FILE_ID = "1--7p9rRJy7WU4OmomkzM8i0veetZctTT"
 ```
 
-- **Idempotent:** Checks if the file already exists before downloading
-- **Google Drive file ID:** `1--7p9rRJy7WU4OmomkzM8i0veetZctTT` — this is
-  the permanent identifier for the trained weights file
-- **Output path:** `weights/modeldense1.h5` (256 MB, HDF5 format)
-- **Progress:** `quiet=False` displays a download progress bar in the terminal
-- **No credentials needed:** The file is publicly shared on Google Drive
+**Function: `download_weights(dest=WEIGHTS_PATH, url=None)`**
+
+- **Idempotent:** Returns immediately if `dest` exists and is non-empty.
+- **URL first:** Uses the explicit `url` argument, otherwise
+  `os.environ.get("MODEL_WEIGHTS_URL")`, and streams it with `_download_url`.
+- **Google Drive fallback:** When no URL is set, lazily imports `gdown` and
+  downloads `GDRIVE_FILE_ID`. If `gdown` is missing or returns `None`, raises a
+  `RuntimeError` pointing the operator at `MODEL_WEIGHTS_URL`.
+- **Atomic write:** Downloads into `<name>.part` and `Path.replace()`s it onto
+  `dest`, so a partial transfer never leaves a corrupt weights file.
+- **Cleanup:** A `finally` block removes any leftover `.part` file.
+- **Google Drive file ID:** `1--7p9rRJy7WU4OmomkzM8i0veetZctTT` — permanent
+  identifier for the trained weights file (publicly shared, no credentials).
+
+**Function: `_download_url(url, dest)`** — stdlib `urllib` download with a
+120-second timeout and a `User-Agent` of `oncology-breast-scanner/1.0`,
+streamed to disk with `shutil.copyfileobj`.
+
+**Deployment note:** On Streamlit Community Cloud, set the `MODEL_WEIGHTS_URL`
+secret to a direct (non–Google-Drive) weights URL to avoid Drive quota errors
+on cold start; otherwise the gdown fallback is used.
 
 ---
 
-### 3.4 `preprocess.py` — Image Preprocessing
+### 3.5 `preprocess.py` — Image Preprocessing
 
 **File:** `preprocess.py` (60 lines)
 **Purpose:** Image preprocessing pipeline for mammogram inference.
@@ -435,17 +478,17 @@ End-to-end function for loading an image from disk:
 3. `preprocess_mammogram()` — applies CLAHE, sharpening, resize
 4. `normalize_for_model()` — scales to [0, 1]
 
-Used by `evaluate.py` and `train.py` for batch processing.
+Used by `evaluate.py` for batch processing (training uses
+`preprocess_mammogram()` / `normalize_for_model()` directly).
 
 #### Function: `preprocess_numpy_array(img_array, ...)` (lines 49–60)
 
-The function called by `app.py` for Gradio-uploaded images (in-memory
-numpy arrays):
+The function called by `inference.py` for in-memory images (PIL images
+converted to numpy arrays by `streamlit_app.py`):
 
 1. **Null guard:** Returns None for empty/None arrays
 2. **Dtype normalization:**
    - If the array is float in [0, 1] range, upscales to [0, 255] uint8
-     (Gradio passes float images by default)
    - If the array is a non-uint8 type, casts to uint8
 3. Runs `preprocess_mammogram()` then `normalize_for_model()`
 4. Returns a (224, 224, 3) float32 array in [0, 1]
@@ -476,7 +519,7 @@ python train.py --train-csv data/train_set.csv --image-dir data/images \
 
 **Module-Level Constants:**
 - `CLASS_NAMES` — 8 training labels using a slightly different naming scheme
-  than `app.py`: `'Density1Benign'`, `'Density1Malignant'`, etc.
+  than `inference.py`: `'Density1Benign'`, `'Density1Malignant'`, etc.
 - `CLASS_TO_INDEX` — dict mapping label name → integer index
 
 #### Class: `MammogramGenerator(tf.keras.utils.Sequence)` (lines 37–105)
@@ -801,20 +844,22 @@ They are inputs to `prepare_dataset.py` and are gitignored due to size (~2 MB to
 
 ### 7.1 `image/` Directory
 
-Contains 8 PNG files used in the README and Gradio UI. Note that `Begign.png`
-is a typo variant of `benign.png` and `Maliggnant.png` is a typo variant of
-`malignant.png` — both pairs appear to be the same images.
+Contains 8 PNG files used in the README and the Streamlit UI. Note that
+`Begign.png` is a typo variant of `benign.png` and `Maliggnant.png` is a typo
+variant of `malignant.png` — both pairs appear to be the same images. The app
+loads only `benign.png` and `malignant.png` (via `IMAGE_DIR`); the remaining
+files are legacy assets retained in the repository.
 
 | File | Size | Used In | Description |
 |------|------|---------|-------------|
-| `benign.png` | 133 KB | UI Tab 3 | Benign mammogram example |
-| `malignant.png` | 117 KB | UI Tab 3 | Malignant mammogram example |
-| `Begign.png` | 133 KB | (duplicate) | Typo variant of benign.png |
-| `Maliggnant.png` | 117 KB | (duplicate) | Typo variant of malignant.png |
-| `processing.png` | 115 KB | UI Tab 2 | Preprocessing pipeline visualization |
-| `after cropping.png` | 160 KB | UI Tab 2 | Post-cropping/enhancement result |
-| `prediction.png` | 159 KB | UI Tab 3 | Sample prediction output screenshot |
-| `webpage.png` | 44 KB | (unused in UI) | Original Gradio interface screenshot |
+| `benign.png` | 133 KB | UI Tab 3 + README | Benign mammogram example |
+| `malignant.png` | 117 KB | UI Tab 3 + README | Malignant mammogram example |
+| `Begign.png` | 133 KB | (legacy duplicate) | Typo variant of benign.png |
+| `Maliggnant.png` | 117 KB | (legacy duplicate) | Typo variant of malignant.png |
+| `processing.png` | 115 KB | (legacy) | Preprocessing pipeline visualization |
+| `after cropping.png` | 160 KB | (legacy) | Post-cropping/enhancement result |
+| `prediction.png` | 159 KB | (legacy) | Sample prediction output screenshot |
+| `webpage.png` | 44 KB | (unused) | Historical Gradio interface screenshot |
 
 ### 7.2 `Test_images/` Directory
 
@@ -836,20 +881,27 @@ providing balanced example coverage in the UI example gallery.
 
 ### 8.1 `requirements.txt`
 
-Lists Python package dependencies:
+Pinned Python package dependencies (Streamlit stack):
 
-| Package | Purpose |
-|---------|---------|
-| `gradio` | Web UI framework (latest) |
-| `pillow` | Image handling (PIL fork) |
-| `numpy>=1.9.2` | Numerical computing |
-| `gdown` | Google Drive file download |
-| `opencv-python-headless` | OpenCV without GUI (server-safe) |
-| `tensorflow>=2.13.0` | Deep learning framework |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `streamlit` | `1.40.1` | Web UI framework |
+| `tensorflow-cpu` | `2.15.0` | CPU-only deep learning framework |
+| `opencv-python-headless` | `4.9.0.80` | OpenCV without GUI (server-safe) |
+| `pillow` | `10.4.0` | Image handling (PIL fork) |
+| `numpy` | `1.26.4` | Numerical computing |
+| `gdown` | `5.0.0` | Google Drive fallback download for weights |
 
-**Note on TensorFlow version:** Originally pinned to `tensorflow==2.4.1` (Feb 2021).
-Now set to `>=2.13.0` for compatibility with modern Python (3.10+) and HuggingFace
-Spaces. The `.h5` weight format is backward-compatible across TF versions.
+**Note on TensorFlow:** Switched from the full `tensorflow` GPU wheel to
+`tensorflow-cpu`, since deployment targets (Streamlit Community Cloud) have no
+GPU. Version 2.15.0 is the last release supporting Python 3.11 with Keras 2,
+matching the `.h5` weight format used here.
+
+**Note on pins:** All versions are pinned exactly so local, Docker, and cloud
+builds resolve identically.
+
+**System packages:** `packages.txt` installs `libgomp1` (required by
+TensorFlow) and `libglib2.0-0` (required by OpenCV at import time).
 
 ### 8.2 `.gitignore`
 
@@ -857,7 +909,8 @@ Excludes from version control:
 - **Model artifacts:** `model/`, `weights/` (too large for Git, downloaded at runtime)
 - **Training data:** `data/`, `csv_*_train.csv`, `csv_*_test.csv`
 - **Generated outputs:** `evaluation_output/`, `training_output/`, `flagged/`
-- **Runtime files:** `.gradio/`, `__pycache__/`, `*.pyc`, `.ipynb_checkpoints/`
+- **Runtime files:** `.gradio/` (legacy), `.venv/`, `__pycache__/`, `*.pyc`,
+  `.ipynb_checkpoints/`
 - **macOS:** `.DS_Store`
 
 ---
@@ -882,8 +935,9 @@ across major TF version differences.
 Weights-only file in HDF5 format. Contains only the layer weight matrices —
 no architecture, no optimizer state.
 
-- Downloaded from Google Drive at runtime via `gdown` (file ID:
-  `1--7p9rRJy7WU4OmomkzM8i0veetZctTT`)
+- Downloaded at runtime by `weights.download_weights()`: a direct URL from
+  the `MODEL_WEIGHTS_URL` environment variable is preferred, with a `gdown`
+  Google Drive fallback (file ID: `1--7p9rRJy7WU4OmomkzM8i0veetZctTT`)
 - More portable than the full model — compatible across TF versions
   when loaded into a freshly built architecture
 - Saved by `train.py` via `model.save_weights()`
@@ -896,9 +950,12 @@ no architecture, no optimizer state.
 |-----------|-------------|---------|
 | `evaluation_output/` | Yes | Plots and CSVs from `evaluate.py` (confusion matrix, ROC, PR curves, predictions CSV) |
 | `training_output/` | Yes | Training checkpoints, logs, and curves from `train.py` (`.weights.h5` files, `training_log.csv`, `training_curves.png`) |
-| `flagged/` | Yes | Gradio's built-in flagging system — stores `log.csv` of flagged predictions and the corresponding images in `img/` |
-| `.gradio/` | Yes | Gradio runtime files (TLS certificate for share links, session data) |
+| `weights/` | Yes | Runtime-downloaded model weights (`modeldense1.h5`); not committed due to size |
+| `.venv/` | Yes | Local virtual environment |
 | `__pycache__/` | Yes | Python bytecode cache |
+
+> Legacy Gradio runtime directories (`.gradio/`, `flagged/`) are still listed
+> in `.gitignore` but are no longer produced now that the UI is Streamlit.
 
 ---
 
@@ -907,34 +964,36 @@ no architecture, no optimizer state.
 ### Inference Flow (User visits the web app)
 
 ```
-User uploads mammogram
+User uploads a mammogram (st.file_uploader) or clicks an example
        │
        v
-Gradio gr.Image widget
-  → numpy array (H, W, 3), dtype=float32, values in [0,1]
+PIL Image opened → st.session_state["image"]
        │
        v
-predict_img(img) in app.py
+"Analyze" button → np.array(image)  (RGB, uint8)
        │
        v
 preprocess_numpy_array(img) in preprocess.py
-  → detect float [0,1] → upscale to uint8 [0,255]
-  → grayscale/A → RGB conversion
-  → cv2.resize(224, 224)
-  → sharpen kernel convolution
-  → divide by 255.0 → [0,1]
+   → detect float [0,1] → upscale to uint8 [0,255]
+   → grayscale/A → RGB conversion
+   → cv2.resize(224, 224)
+   → sharpen kernel convolution
+   → divide by 255.0 → [0,1]
        │
        v
-model.predict(processed.reshape(1, 224, 224, 3))
-  → 8-class softmax probabilities
+predict_array(model, img) in inference.py
+   → model.predict(processed.reshape(1, 224, 224, 3), verbose=0)[0]
+   → 8-class softmax probabilities → {class_name: probability}
        │
        v
-Confidence gate: max < 0.3?
-  YES → "Low confidence" message
-  NO  → {class_name: probability} dict for all 8 classes
+top_prediction(scores)
+   → (label, confidence, low_confidence)
+   → if max < LOW_CONFIDENCE_THRESHOLD (0.3): low_confidence = True
        │
        v
-gr.Label displays horizontal bar chart
+streamlit_app.py renders:
+   → st.metric (label + confidence %)  |  low-confidence st.warning
+   → per-class probability bars (st.progress, sorted high → low)
 ```
 
 ### Training Flow (Retraining the model)

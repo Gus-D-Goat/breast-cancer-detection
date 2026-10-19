@@ -1,20 +1,22 @@
-import os
+from pathlib import Path
+
 import tensorflow as tf
 from tensorflow.keras.layers import Dense, BatchNormalization, Dropout, GlobalAveragePooling2D, GlobalMaxPooling2D, Concatenate, Input
 from tensorflow.keras.applications import DenseNet201
 from tensorflow.keras.models import Model
 from tensorflow.keras.regularizers import l1_l2
 
-MODEL_PATH = "model/model.h5"
-WEIGHTS_PATH = "weights/modeldense1.h5"
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_PATH = BASE_DIR / "model" / "model.h5"
+WEIGHTS_PATH = BASE_DIR / "weights" / "modeldense1.h5"
 
 
-def build_model(input_shape=(224, 224, 3), n_classes=8, dropout_rate=0.5):
+def build_model(input_shape=(224, 224, 3), n_classes=8, dropout_rate=0.5, pretrained=True):
     conv_base = DenseNet201(
         input_shape=input_shape,
         include_top=False,
         pooling=None,
-        weights='imagenet'
+        weights="imagenet" if pretrained else None
     )
     conv_base.trainable = True
 
@@ -34,14 +36,16 @@ def build_model(input_shape=(224, 224, 3), n_classes=8, dropout_rate=0.5):
     return Model(inputs=inputs, outputs=outputs)
 
 
-def load_model(path=MODEL_PATH, weights_path=WEIGHTS_PATH):
-    if os.path.exists(path) and path.endswith('.h5'):
+def load_model(path=MODEL_PATH, weights_path=WEIGHTS_PATH, pretrained=True):
+    path = Path(path)
+    weights_path = Path(weights_path)
+    if path.exists() and path.suffix == ".h5":
         try:
             return tf.keras.models.load_model(path)
         except Exception:
             pass
-    model = build_model()
-    if os.path.exists(weights_path):
+    model = build_model(pretrained=pretrained)
+    if weights_path.exists():
         model.load_weights(weights_path)
         print(f"Loaded weights from {weights_path}")
     model.compile(
@@ -53,5 +57,6 @@ def load_model(path=MODEL_PATH, weights_path=WEIGHTS_PATH):
 
 
 def save_model(model, path=MODEL_PATH):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    model.save(path)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    model.save(str(path))

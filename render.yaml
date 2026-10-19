@@ -7,4 +7,4 @@ services:
     autoDeploy: true
     envVars:
       - key: PORT
-        value: 7860
+        value: 8501

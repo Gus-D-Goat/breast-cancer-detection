@@ -1,4 +1,4 @@
-gradio==4.44.1
+streamlit==1.40.1
 tensorflow-cpu==2.15.0
 opencv-python-headless==4.9.0.80
 pillow==10.4.0
