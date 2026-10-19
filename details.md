@@ -252,12 +252,14 @@ framework.
 #### Function: `load_inference_model(weights_path=WEIGHTS_PATH, weights_url=None)`
 
 Builds and loads a ready-to-use model:
-1. Lazily imports `build_model` from `model.py` (keeps the TensorFlow import out
-   of module import time).
+1. Lazily imports `build_model_for_weights` from `model.py` (keeps the
+   TensorFlow import out of module import time).
 2. Calls `download_weights(dest=weights_path, url=weights_url)`, which returns
    the resolved path whether the file already existed or was freshly downloaded.
-3. Builds the architecture with `pretrained=False` (weights come from disk, not
-   ImageNet).
+3. Builds the architecture matching the saved layer names with
+   `pretrained=False` (weights come from disk, not ImageNet). The released
+   five-layer weights select `build_legacy_model`; a seven-layer file selects
+   `build_model`.
 4. Loads the weights with `model.load_weights(path)`.
 5. Returns the model.
 
@@ -287,7 +289,7 @@ unreliable result on out-of-distribution or corrupted images.
 
 ### 3.3 `model.py` — Model Architecture
 
-**File:** `model.py` (62 lines)
+**File:** `model.py` (128 lines)
 **Purpose:** Defines, builds, loads, and saves the DenseNet201-based classifier.
 
 **Imports:**
@@ -295,11 +297,14 @@ unreliable result on out-of-distribution or corrupted images.
 - `tensorflow` / `tensorflow.keras.*` — model construction and loading
 - `DenseNet201` from Keras applications
 - `l1_l2` regularizer
+- `h5py` — reads the saved layer-name list from `.h5` weights files
 
 **Module-Level Constants (resolved relative to the file, not the CWD):**
 - `BASE_DIR = Path(__file__).resolve().parent`
 - `MODEL_PATH = BASE_DIR / "model" / "model.h5"` — default path for full model serialization
 - `WEIGHTS_PATH = BASE_DIR / "weights" / "modeldense1.h5"` — default path for weights-only file
+- `LEGACY_LAYER_NAMES` — the five layer names stored in the released weights file:
+  `("densenet201", "batch_normalization", "dense", "batch_normalization_1", "dense_1")`
 
 #### Function: `build_model(input_shape=(224,224,3), n_classes=8, dropout_rate=0.5, pretrained=True)`
 
@@ -351,9 +356,51 @@ DenseNet201 (include_top=False, weights='imagenet' if pretrained else None, trai
   then full fine-tuning) externally.
 - **`pretrained` flag:** `weights="imagenet" if pretrained else None`. Training
   and generic loading use `pretrained=True` to fetch ImageNet backbone weights;
-  inference calls `build_model(pretrained=False)` because the trained weights
-  are then loaded from the local `.h5` file, avoiding a network fetch and the
-  associated memory spike on constrained hosts.
+  inference calls `build_model_for_weights(..., pretrained=False)` because the
+  trained weights are then loaded from the local `.h5` file, avoiding a network
+  fetch and the associated memory spike on constrained hosts.
+
+#### Function: `build_legacy_model(input_shape=(224,224,3), n_classes=8, pretrained=False)`
+
+Builds the **older five-layer Sequential architecture** whose weights are stored
+in the released `weights/modeldense1.h5` (trained with Keras 2.4.0 and
+`Demo_Notebook.ipynb`). This is *not* the seven-layer `build_model` graph above;
+loading the released file into that graph fails with
+`ValueError: Layer count mismatch when loading weights from file`.
+
+```
+DenseNet201 (include_top=False, pooling='max', weights=imagenet if pretrained else None)
+    |
+BatchNormalization
+    |
+Dense(2048, relu, L1L2 reg=0.01)
+    |
+BatchNormalization
+    |
+Dense(8, softmax)
+```
+
+- The backbone is wrapped in a `Sequential`, so the saved layer name is
+  `densenet201`. TF 2.15's `DenseNet201` constructor rejects a `name=` argument,
+  so the module assigns `conv_base._name = "densenet201"` after construction;
+  the four head layers pass explicit names.
+- Total parameters: **22,288,456** (vs. 22,805,576 for the seven-layer graph).
+
+#### Function: `saved_weight_layer_names(weights_path)`
+
+Opens the `.h5` file with `h5py` and returns its saved layer-name list, or
+`None` when the file cannot be inspected. It mirrors Keras' lookup order:
+root-level `layer_names` first (files written by `Functional.save_weights`),
+otherwise `model_weights/layer_names` (files written by older Keras
+`Model.save_weights`). This is the same group Keras uses when loading.
+
+#### Function: `build_model_for_weights(weights_path, input_shape, n_classes, pretrained)`
+
+Dispatches on the saved layer-name set:
+
+- names equal `LEGACY_LAYER_NAMES` → `build_legacy_model(...)`
+- any other layout (including the seven-layer graph) → `build_model(...)`
+- `None` (unreadable file) → `build_model(...)`
 
 #### Function: `load_model(path=MODEL_PATH, weights_path=WEIGHTS_PATH, pretrained=True)`
 
@@ -365,7 +412,8 @@ A smart model loader with fallback logic:
    - Wrapped in try/except to handle TF version mismatches (model was
      originally trained with TF 2.4.1)
 2. If step 1 fails or the file doesn't exist → call
-   `build_model(pretrained=pretrained)` for a fresh architecture
+   `build_model_for_weights(weights_path, ...)` when `weights_path` exists,
+   otherwise `build_model(pretrained=pretrained)` for a fresh architecture
 3. If `weights_path` exists → load weights into the architecture
 4. Compile with Adam(learning_rate=1e-5),
    CategoricalCrossentropy(label_smoothing=0.1), accuracy metric
@@ -514,7 +562,9 @@ python train.py --train-csv data/train_set.csv --image-dir data/images \
 - `numpy`, `tensorflow`, `pandas` — core ML/data stack
 - `sklearn.model_selection.train_test_split` — train/val split
 - `sklearn.utils.class_weight.compute_class_weight` — handles class imbalance
-- `model.build_model` / `model.save_model` — model construction and persistence
+- `model.build_model` / `model.build_legacy_model` /
+  `model.build_model_for_weights` / `model.save_model` — model construction,
+  weight-layout dispatch, and persistence
 - `preprocess.preprocess_mammogram` / `preprocess.normalize_for_model` — per-image processing
 
 **Module-Level Constants:**
@@ -941,6 +991,27 @@ no architecture, no optimizer state.
 - More portable than the full model — compatible across TF versions
   when loaded into a freshly built architecture
 - Saved by `train.py` via `model.save_weights()`
+
+**Which architecture?** The released file was written with Keras 2.4.0 and
+contains a `model_weights` group whose `layer_names` are
+`["densenet201", "batch_normalization", "dense", "batch_normalization_1", "dense_1"]`.
+That is the **five-layer legacy Sequential** from `Demo_Notebook.ipynb`
+(`build_legacy_model`), not the seven-layer graph produced by `build_model`.
+`inference.load_inference_model` reads those names with
+`saved_weight_layer_names` and dispatches automatically; hard-coding the
+seven-layer graph raises `Layer count mismatch when loading weights from file`
+(7 expected vs. 5 saved). A file written by `build_model` (root-level
+`layer_names`, e.g. an 11-entry list plus an `input` layer) selects
+`build_model` instead.
+
+Verified predictions with the released weights and the app's preprocessing:
+
+| Test image | Predicted class | Confidence |
+|------------|-----------------|------------|
+| `Density1Malignant.jpg` | Malignant with Density=1 | 0.795 |
+| `Density2Malignant.jpg` | Malignant with Density=2 | 0.800 |
+| `Density3Benign.jpg` | Benign with Density=3 | 0.617 |
+| `Density4Benign.jpg` | Benign with Density=4 | 0.754 |
 
 ---
 

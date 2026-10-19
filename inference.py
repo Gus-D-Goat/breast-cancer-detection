@@ -17,10 +17,11 @@ LOW_CONFIDENCE_LABEL = "Low confidence — consider re-uploading"
 
 
 def load_inference_model(weights_path=WEIGHTS_PATH, weights_url=None):
-    from model import build_model
+    from model import build_model_for_weights
 
     path = download_weights(dest=weights_path, url=weights_url)
-    model = build_model(
+    model = build_model_for_weights(
+        path,
         input_shape=INPUT_SHAPE,
         n_classes=len(CLASS_NAMES),
         pretrained=False,

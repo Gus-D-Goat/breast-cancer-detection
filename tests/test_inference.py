@@ -46,6 +46,29 @@ class InferenceContractTests(unittest.TestCase):
         self.assertEqual(label, "A")
         self.assertAlmostEqual(confidence, 0.8)
 
+    def test_saved_weight_layer_names_handles_both_layouts(self):
+        try:
+            import tempfile
+
+            import h5py
+            from model import LEGACY_LAYER_NAMES, saved_weight_layer_names
+        except ImportError:
+            self.skipTest("h5py is not installed")
+
+        encoded = [name.encode() for name in LEGACY_LAYER_NAMES]
+        with tempfile.TemporaryDirectory() as directory:
+            root_layout = Path(directory) / "root.h5"
+            nested_layout = Path(directory) / "nested.h5"
+
+            with h5py.File(root_layout, "w") as handle:
+                handle.attrs["layer_names"] = encoded
+
+            with h5py.File(nested_layout, "w") as handle:
+                handle.create_group("model_weights").attrs["layer_names"] = encoded
+
+            self.assertEqual(saved_weight_layer_names(root_layout), list(LEGACY_LAYER_NAMES))
+            self.assertEqual(saved_weight_layer_names(nested_layout), list(LEGACY_LAYER_NAMES))
+
     def test_model_predictions_on_example_images(self):
         weights_path = ROOT / "weights" / "modeldense1.h5"
         if not weights_path.exists():
